@@ -1,43 +1,79 @@
 @echo off
-:: TermChat Windows - terminal chat, GitHub backend
+:: TermChat Windows - anonymous, GitHub public repo, seamless cross-platform
+
+setlocal enabledelayedexpansion
+
+:: Config
 set REPO_RAW=https://raw.githubusercontent.com/Rocco45Git/TermChat/main/messages.log
-set REPO_API=https://api.github.com/repos/Rocco45Git/TermChat/contents/messages.log
-set TOKEN_FILE=%USERPROFILE%\.termchat_token
 set ARCHIVE=%USERPROFILE%\.termchat_local.log
 set USER_FILE=%USERPROFILE%\.termchat_user
+set BANS=%USERPROFILE%\.termchat_bans.log
+
+:: Setup files
+if not exist "%ARCHIVE%" type nul > "%ARCHIVE%"
+if not exist "%BANS%" type nul > "%BANS%"
 
 :: Username setup
 if not exist "%USER_FILE%" (
-    :getname
-    set /p USERNAME="Choose your username (cannot be Rocco44): "
+    :GETNAME
+    set /p USERNAME=Choose your username (cannot be Rocco44 unless owner patch): 
     if "%USERNAME%"=="Rocco44" (
         echo That username is reserved.
-        goto getname
+        goto GETNAME
     )
     echo %USERNAME%>%USER_FILE%
 )
 for /f "delims=" %%u in (%USER_FILE%) do set USERNAME=%%u
 
-:: Ensure archive exists
-if not exist "%ARCHIVE%" type nul > "%ARCHIVE%"
-
-:mainloop
-cls
-echo ------ TermChat ------
+:: Fetch messages from GitHub
+:FETCH
 powershell -Command "(Invoke-WebRequest %REPO_RAW%).Content" > "%ARCHIVE%.tmp"
-type "%ARCHIVE%.tmp" | findstr /v "^@" 
-echo ---------------------
-set /p MESSAGE="%USERNAME%: "
+move /Y "%ARCHIVE%.tmp" "%ARCHIVE%" >nul
 
-:: Handle command posts
-echo %MESSAGE% | findstr /b "@" >nul
-if %ERRORLEVEL%==0 (
-    echo Command detected, processing...
-    :: Commands would be parsed similarly as in Linux script using PowerShell for API push
-    goto mainloop
+:: Display messages excluding hidden posts
+cls
+echo ----- TermChat -----
+for /f "usebackq tokens=*" %%m in ("%ARCHIVE%") do (
+    set line=%%m
+    if not "!line:~0,1!"=="@" echo !line!
+)
+echo -------------------
+
+:: Main input loop
+:INPUT
+set /p MESSAGE=%USERNAME%: 
+
+:: Check if command
+set firstchar=%MESSAGE:~0,1%
+if "%firstchar%"=="@" (
+    set CMD=%MESSAGE:~0,7%
+    if /i "!CMD!"=="@ban " (
+        if "%USERNAME%"=="Rocco44 (MOD)" (
+            for /f "tokens=2" %%t in ("!MESSAGE!") do echo %%t>>"%BANS%"
+            echo [MOD] %%t banned.
+        ) else echo Only the owner can ban.
+        goto FETCH
+    )
+    if /i "!CMD!"=="@unban" (
+        if "%USERNAME%"=="Rocco44 (MOD)" (
+            for /f "tokens=2" %%t in ("!MESSAGE!") do (
+                powershell -Command "(Get-Content '%BANS%' | Where-Object {$_ -ne '%%t'}) | Set-Content '%BANS%'"
+            )
+            echo [MOD] User unbanned.
+        ) else echo Only the owner can unban.
+        goto FETCH
+    )
+    if /i "!CMD!"=="@givenn" (
+        for /f "tokens=2" %%n in ("!MESSAGE!") do echo [SYSTEM] Username %%n is now available.
+        goto FETCH
+    )
+    if /i "!CMD!"=="@help  " (
+        echo [AUTOMOD] Commands: @ban, @unban, @givename, @help, hidden posts start with @
+        goto FETCH
+    )
+    goto FETCH
 )
 
-:: Append normal message
-powershell -Command "Add-Content -Path '%ARCHIVE%' -Value ('%USERNAME%: %MESSAGE%')"
-:: Push message via API (PowerShell curl PUT with token)
-goto mainloop
+:: Normal message
+echo %USERNAME%: %MESSAGE%>>"%ARCHIVE%"
+goto FETCH

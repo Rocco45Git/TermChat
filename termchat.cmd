@@ -1,90 +1,89 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-:: Config
-set REPO_RAW=https://raw.githubusercontent.com/Rocco45Git/TermChat/main/messages.log
+set BLOB_URL=https://jsonblob.com/api/jsonBlob/019d61d5-808c-7125-8911-f59a97277d99
 set ARCHIVE=%USERPROFILE%\.termchat_local.log
 set USER_FILE=%USERPROFILE%\.termchat_user
 set BANS=%USERPROFILE%\.termchat_bans.log
 
-:: Setup files
 if not exist "%ARCHIVE%" type nul > "%ARCHIVE%"
 if not exist "%BANS%" type nul > "%BANS%"
 
-:: Username setup
+:: USERNAME
 if not exist "%USER_FILE%" (
-    :GETNAME
-    set /p USERNAME=Choose your username (cannot be Rocco44 unless owner patch): 
-    if "%USERNAME%"=="Rocco44" (
-        echo That username is reserved.
-        goto GETNAME
-    )
-    echo %USERNAME%>"%USER_FILE%"
+:ask
+set /p NAME=Choose username: 
+if "%NAME%"=="Rocco44" goto ask
+echo %NAME%>"%USER_FILE%"
 )
 
-:: Load username
 set /p USERNAME=<"%USER_FILE%"
 
-:: MAIN LOOP
-:LOOP
+:loop
 
-:: Fetch messages
-powershell -Command "try { (Invoke-WebRequest '%REPO_RAW%' -UseBasicParsing).Content } catch { '' }" > "%ARCHIVE%"
+:: FETCH
+powershell -Command "(Invoke-RestMethod '%BLOB_URL%').messages" > "%ARCHIVE%"
 
-:: Display messages (hide command posts)
 cls
-echo ----- TermChat -----
+echo ===== TermChat =====
 for /f "usebackq delims=" %%A in ("%ARCHIVE%") do (
     set line=%%A
     if not "!line:~0,1!"=="@" echo !line!
 )
-echo --------------------
+echo ====================
 
-:: Input
+:: BAN CHECK
+findstr /x "%USERNAME%" "%BANS%" >nul
+if %errorlevel%==0 (
+    echo You are banned.
+    timeout /t 3 >nul
+    goto loop
+)
+
 set /p MESSAGE=%USERNAME%: 
 
-:: Check if message starts with @
+:: COMMANDS
 if "%MESSAGE:~0,1%"=="@" (
 
-    :: Extract command + target
     for /f "tokens=1,2" %%A in ("%MESSAGE%") do (
         set CMD=%%A
-        set TARGET=%%B
+        set ARG=%%B
     )
 
-    :: OWNER CHECK
     if "%USERNAME%"=="Rocco44 (MOD)" (
-
         if /i "!CMD!"=="@ban" (
-            if not "!TARGET!"=="Rocco44" (
-                echo !TARGET!>>"%BANS%"
-                echo [MOD] !TARGET! banned.
-            )
-            goto LOOP
+            echo !ARG!>>"%BANS%"
+            goto loop
         )
-
         if /i "!CMD!"=="@unban" (
-            powershell -Command "(Get-Content '%BANS%' | Where-Object {$_ -ne '!TARGET!'}) | Set-Content '%BANS%'"
-            echo [MOD] !TARGET! unbanned.
-            goto LOOP
+            powershell -Command "(Get-Content '%BANS%' | Where {$_ -ne '!ARG!'}) | Set-Content '%BANS%'"
+            goto loop
         )
     )
 
-    :: NON-OWNER COMMANDS
-    if /i "!CMD!"=="@givename" (
-        echo [SYSTEM] Username !TARGET! is now available.
-        goto LOOP
+    if "%USERNAME%"=="GalixigaGamez (MOD)" (
+        if /i "!CMD!"=="@ban" (
+            echo !ARG!>>"%BANS%"
+            goto loop
+        )
+        if /i "!CMD!"=="@unban" (
+            powershell -Command "(Get-Content '%BANS%' | Where {$_ -ne '!ARG!'}) | Set-Content '%BANS%'"
+            goto loop
+        )
     )
 
     if /i "!CMD!"=="@help" (
-        echo [AUTOMOD -> %USERNAME%] Commands: @ban, @unban, @givename, @help
-        goto LOOP
+        echo [AUTOMOD] Commands: @ban @unban @givename @help
+        goto loop
     )
 
-    goto LOOP
+    goto loop
 )
 
-:: Normal message (append locally)
-echo %USERNAME%: %MESSAGE%>>"%ARCHIVE%"
+:: SEND
+powershell -Command ^
+"$d=Invoke-RestMethod '%BLOB_URL%'; ^
+$d.messages += '%USERNAME%: %MESSAGE%'; ^
+Invoke-RestMethod -Method Put -Uri '%BLOB_URL%' -Body ($d | ConvertTo-Json -Depth 5) -ContentType 'application/json'"
 
-goto LOOP
+goto loop

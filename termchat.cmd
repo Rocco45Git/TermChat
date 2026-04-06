@@ -1,7 +1,5 @@
 @echo off
-:: TermChat Windows - anonymous, GitHub public repo, seamless cross-platform
-
-setlocal enabledelayedexpansion
+setlocal EnableDelayedExpansion
 
 :: Config
 set REPO_RAW=https://raw.githubusercontent.com/Rocco45Git/TermChat/main/messages.log
@@ -21,59 +19,72 @@ if not exist "%USER_FILE%" (
         echo That username is reserved.
         goto GETNAME
     )
-    echo %USERNAME%>%USER_FILE%
+    echo %USERNAME%>"%USER_FILE%"
 )
-for /f "delims=" %%u in (%USER_FILE%) do set USERNAME=%%u
 
-:: Fetch messages from GitHub
-:FETCH
-powershell -Command "(Invoke-WebRequest %REPO_RAW%).Content" > "%ARCHIVE%.tmp"
-move /Y "%ARCHIVE%.tmp" "%ARCHIVE%" >nul
+:: Load username
+set /p USERNAME=<"%USER_FILE%"
 
-:: Display messages excluding hidden posts
+:: MAIN LOOP
+:LOOP
+
+:: Fetch messages
+powershell -Command "try { (Invoke-WebRequest '%REPO_RAW%' -UseBasicParsing).Content } catch { '' }" > "%ARCHIVE%"
+
+:: Display messages (hide command posts)
 cls
 echo ----- TermChat -----
-for /f "usebackq tokens=*" %%m in ("%ARCHIVE%") do (
-    set line=%%m
+for /f "usebackq delims=" %%A in ("%ARCHIVE%") do (
+    set line=%%A
     if not "!line:~0,1!"=="@" echo !line!
 )
-echo -------------------
+echo --------------------
 
-:: Main input loop
-:INPUT
+:: Input
 set /p MESSAGE=%USERNAME%: 
 
-:: Check if command
-set firstchar=%MESSAGE:~0,1%
-if "%firstchar%"=="@" (
-    set CMD=%MESSAGE:~0,7%
-    if /i "!CMD!"=="@ban " (
-        if "%USERNAME%"=="Rocco44 (MOD)" (
-            for /f "tokens=2" %%t in ("!MESSAGE!") do echo %%t>>"%BANS%"
-            echo [MOD] %%t banned.
-        ) else echo Only the owner can ban.
-        goto FETCH
+:: Check if message starts with @
+if "%MESSAGE:~0,1%"=="@" (
+
+    :: Extract command + target
+    for /f "tokens=1,2" %%A in ("%MESSAGE%") do (
+        set CMD=%%A
+        set TARGET=%%B
     )
-    if /i "!CMD!"=="@unban" (
-        if "%USERNAME%"=="Rocco44 (MOD)" (
-            for /f "tokens=2" %%t in ("!MESSAGE!") do (
-                powershell -Command "(Get-Content '%BANS%' | Where-Object {$_ -ne '%%t'}) | Set-Content '%BANS%'"
+
+    :: OWNER CHECK
+    if "%USERNAME%"=="Rocco44 (MOD)" (
+
+        if /i "!CMD!"=="@ban" (
+            if not "!TARGET!"=="Rocco44" (
+                echo !TARGET!>>"%BANS%"
+                echo [MOD] !TARGET! banned.
             )
-            echo [MOD] User unbanned.
-        ) else echo Only the owner can unban.
-        goto FETCH
+            goto LOOP
+        )
+
+        if /i "!CMD!"=="@unban" (
+            powershell -Command "(Get-Content '%BANS%' | Where-Object {$_ -ne '!TARGET!'}) | Set-Content '%BANS%'"
+            echo [MOD] !TARGET! unbanned.
+            goto LOOP
+        )
     )
-    if /i "!CMD!"=="@givenn" (
-        for /f "tokens=2" %%n in ("!MESSAGE!") do echo [SYSTEM] Username %%n is now available.
-        goto FETCH
+
+    :: NON-OWNER COMMANDS
+    if /i "!CMD!"=="@givename" (
+        echo [SYSTEM] Username !TARGET! is now available.
+        goto LOOP
     )
-    if /i "!CMD!"=="@help  " (
-        echo [AUTOMOD] Commands: @ban, @unban, @givename, @help, hidden posts start with @
-        goto FETCH
+
+    if /i "!CMD!"=="@help" (
+        echo [AUTOMOD -> %USERNAME%] Commands: @ban, @unban, @givename, @help
+        goto LOOP
     )
-    goto FETCH
+
+    goto LOOP
 )
 
-:: Normal message
+:: Normal message (append locally)
 echo %USERNAME%: %MESSAGE%>>"%ARCHIVE%"
-goto FETCH
+
+goto LOOP

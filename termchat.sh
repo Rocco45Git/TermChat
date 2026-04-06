@@ -1,90 +1,83 @@
 #!/bin/bash
-# TermChat Linux - fully anonymous, no Git login needed
 
-REPO_RAW="https://raw.githubusercontent.com/Rocco45Git/TermChat/main/messages.log"
+BLOB_URL="https://jsonblob.com/api/jsonBlob/019d61d5-808c-7125-8911-f59a97277d99"
+
 ARCHIVE="$HOME/.termchat_local.log"
 USER_FILE="$HOME/.termchat_user"
 BANS="$HOME/.termchat_bans.log"
 
-# Setup
-touch "$ARCHIVE"
-touch "$BANS"
+mkdir -p "$(dirname "$ARCHIVE")"
+touch "$ARCHIVE" "$BANS"
 
-# Username setup
+# USERNAME SETUP
 if [ ! -f "$USER_FILE" ]; then
     while true; do
-        read -p "Choose your username (cannot be Rocco44 unless owner patch): " username
-        if [[ "$username" == "Rocco44" ]]; then
-            echo "That username is reserved."
+        read -p "Choose username: " name
+        if [[ "$name" == "Rocco44" ]]; then
+            echo "Reserved."
         else
-            echo "$username" > "$USER_FILE"
+            echo "$name" > "$USER_FILE"
             break
         fi
     done
 fi
+
 USERNAME=$(cat "$USER_FILE")
 
-# Fetch messages from GitHub
-fetch_messages() {
-    curl -s "$REPO_RAW" > "$ARCHIVE.tmp" || echo "" > "$ARCHIVE.tmp"
-    mv "$ARCHIVE.tmp" "$ARCHIVE"
+fetch() {
+    curl -s "$BLOB_URL" | jq -r '.messages[]' > "$ARCHIVE"
 }
 
-# Display messages excluding hidden posts
-display_messages() {
-    clear
-    echo "----- TermChat -----"
-    grep -v "^@" "$ARCHIVE"
-    echo "-------------------"
+send() {
+    msg="$1"
+    data=$(curl -s "$BLOB_URL")
+    updated=$(echo "$data" | jq --arg m "$msg" '.messages += [$m]')
+    curl -s -X PUT "$BLOB_URL" -H "Content-Type: application/json" -d "$updated" > /dev/null
 }
 
-# Append a message to local archive
-append_message() {
-    local msg="$1"
-    echo "$(date +%s)|$USERNAME: $msg" >> "$ARCHIVE"
+is_banned() {
+    grep -qx "$USERNAME" "$BANS"
 }
 
-# Handle command posts
-handle_commands() {
-    local msg="$1"
-    if [[ "$msg" == @* ]]; then
-        cmd=$(echo "$msg" | cut -d' ' -f1)
-        case "$cmd" in
-            @ban)
-                if [[ "$USERNAME" == "Rocco44 (MOD)" ]]; then
-                    target=$(echo "$msg" | cut -d' ' -f2)
-                    echo "$target" >> "$BANS"
-                    echo "[MOD] $target banned."
-                else
-                    echo "Only the owner can ban."
-                fi
-                ;;
-            @unban)
-                if [[ "$USERNAME" == "Rocco44 (MOD)" ]]; then
-                    target=$(echo "$msg" | cut -d' ' -f2)
-                    sed -i "/^$target$/d" "$BANS"
-                    echo "[MOD] $target unbanned."
-                else
-                    echo "Only the owner can unban."
-                fi
-                ;;
-            @givename)
-                name=$(echo "$msg" | cut -d' ' -f2)
-                echo "[SYSTEM] Username $name is now available."
-                ;;
-            @help)
-                echo "[AUTOMOD] Commands: @ban, @unban, @givename, @help, hidden posts start with @"
-                ;;
-        esac
-        return 0
-    fi
-    return 1
-}
-
-# Main loop
 while true; do
-    fetch_messages
-    display_messages
-    read -p "$USERNAME: " MESSAGE
-    handle_commands "$MESSAGE" || append_message "$MESSAGE"
+    fetch
+    clear
+    echo "==== TermChat ===="
+    grep -v "^@" "$ARCHIVE"
+    echo "=================="
+
+    if is_banned; then
+        echo "You are banned."
+        sleep 3
+        continue
+    fi
+
+    read -p "$USERNAME: " MSG
+
+    if [[ "$MSG" == @* ]]; then
+        CMD=$(echo "$MSG" | cut -d' ' -f1)
+        ARG=$(echo "$MSG" | cut -d' ' -f2)
+
+        if [[ "$USERNAME" == "Rocco44 (MOD)" || "$USERNAME" == "GalixigaGamez (MOD)" ]]; then
+            if [[ "$CMD" == "@ban" && "$ARG" != "Rocco44" ]]; then
+                echo "$ARG" >> "$BANS"
+                continue
+            fi
+            if [[ "$CMD" == "@unban" ]]; then
+                sed -i "/^$ARG$/d" "$BANS"
+                continue
+            fi
+        fi
+
+        if [[ "$CMD" == "@givename" ]]; then
+            continue
+        fi
+
+        if [[ "$CMD" == "@help" ]]; then
+            send "@personalmssg $USERNAME Commands: @ban @unban @givename @help"
+            continue
+        fi
+    fi
+
+    send "$USERNAME: $MSG"
 done
